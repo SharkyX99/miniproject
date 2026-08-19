@@ -86,57 +86,83 @@ export default async function handler(req, res) {
             // ESP32 UPDATE
             // ======================================
 
-            if (body.action === 'esp32_update') {
+            if (
+                body.action ===
+                'esp32_update'
+            ) {
 
-                // ==========================================
-                // 1. อัปเดตสถานะ ESP32
-                // ==========================================
+                // ----------------------------------
+                // อ่านสถานะปัจจุบันก่อน
+                // ----------------------------------
 
-                const { data: currentState, error: readError } =
-                    await supabase
-                        .from('system_state')
-                        .select('mode, trigger_watering')
-                        .eq('id', 1)
-                        .single();
+                const {
+                    data: currentState,
+                    error: readError
+                } = await supabase
+
+                    .from('system_state')
+
+                    .select(
+                        'mode, trigger_watering'
+                    )
+
+                    .eq('id', 1)
+
+                    .single();
+
 
                 if (readError) {
                     throw readError;
                 }
 
 
-                // ==========================================
-                // 2. อัปเดต Sensor + Relay
-                // ==========================================
+                // ----------------------------------
+                // อัปเดตข้อมูลจาก ESP32
+                // ----------------------------------
 
-                const { error: updateError } =
-                    await supabase
-                        .from('system_state')
-                        .update({
-                            temp: body.temp ?? 0,
-                            hum: body.hum ?? 0,
-                            relay: body.relay ?? false,
-                            updated_at: new Date()
-                        })
-                        .eq('id', 1);
+                const {
+                    error: updateError
+                } = await supabase
+
+                    .from('system_state')
+
+                    .update({
+
+                        temp:
+                            body.temp ?? 0,
+
+                        hum:
+                            body.hum ?? 0,
+
+                        relay:
+                            body.relay ?? false,
+
+                        updated_at:
+                            new Date()
+
+                    })
+
+                    .eq('id', 1);
+
 
                 if (updateError) {
                     throw updateError;
                 }
 
 
-                // ==========================================
-                // 3. ตรวจสอบคำสั่ง START
-                // ==========================================
+                // ----------------------------------
+                // อ่านคำสั่ง
+                // ----------------------------------
 
                 const triggerWatering =
-                    currentState?.trigger_watering ?? false;
+                    currentState?.trigger_watering
+                    ?? false;
 
 
-                // ==========================================
-                // 4. ถ้า ESP32 ยังไม่ได้เปิด Relay
-                //    และ Dashboard สั่ง START
-                //    ให้ส่ง START กลับไป
-                // ==========================================
+                // ----------------------------------
+                // ESP32 ยังไม่ได้เปิด Relay
+                // และ Dashboard สั่ง START
+                // ----------------------------------
 
                 if (
                     triggerWatering === true &&
@@ -146,7 +172,8 @@ export default async function handler(req, res) {
                     return res.status(200).json({
 
                         mode:
-                            currentState?.mode ?? 0,
+                            currentState?.mode
+                            ?? 0,
 
                         triggerWatering:
                             true,
@@ -157,26 +184,34 @@ export default async function handler(req, res) {
                 }
 
 
-                // ==========================================
-                // 5. ถ้า ESP32 เปิด Relay แล้ว
-                //    แสดงว่ารับคำสั่ง START ไปแล้ว
-                //
-                //    RESET trigger_watering
-                // ==========================================
+                // ----------------------------------
+                // ESP32 เปิด Relay แล้ว
+                // แปลว่า START ถูกนำไปใช้แล้ว
+                // ----------------------------------
 
                 if (
                     triggerWatering === true &&
                     body.relay === true
                 ) {
 
-                    const { error: resetError } =
-                        await supabase
-                            .from('system_state')
-                            .update({
-                                trigger_watering: false,
-                                updated_at: new Date()
-                            })
-                            .eq('id', 1);
+                    const {
+                        error: resetError
+                    } = await supabase
+
+                        .from('system_state')
+
+                        .update({
+
+                            trigger_watering:
+                                false,
+
+                            updated_at:
+                                new Date()
+
+                        })
+
+                        .eq('id', 1);
+
 
                     if (resetError) {
                         throw resetError;
@@ -186,7 +221,8 @@ export default async function handler(req, res) {
                     return res.status(200).json({
 
                         mode:
-                            currentState?.mode ?? 0,
+                            currentState?.mode
+                            ?? 0,
 
                         triggerWatering:
                             false,
@@ -197,14 +233,15 @@ export default async function handler(req, res) {
                 }
 
 
-                // ==========================================
-                // 6. ไม่มีคำสั่ง START
-                // ==========================================
+                // ----------------------------------
+                // ไม่มีคำสั่ง START
+                // ----------------------------------
 
                 return res.status(200).json({
 
                     mode:
-                        currentState?.mode ?? 0,
+                        currentState?.mode
+                        ?? 0,
 
                     triggerWatering:
                         false,
@@ -248,7 +285,8 @@ export default async function handler(req, res) {
 
                     .update({
 
-                        mode: mode
+                        mode:
+                            mode
 
                     })
 
@@ -260,10 +298,8 @@ export default async function handler(req, res) {
                 }
 
 
-                // ----------------------------------
                 // ถ้าเปลี่ยนออกจาก Manual
-                // ให้ยกเลิก START เดิม
-                // ----------------------------------
+                // ให้ยกเลิกคำสั่ง START
 
                 if (mode !== 0) {
 
@@ -284,9 +320,11 @@ export default async function handler(req, res) {
 
                 return res.status(200).json({
 
-                    success: true,
+                    success:
+                        true,
 
-                    mode: mode
+                    mode:
+                        mode
                 });
             }
 
@@ -323,9 +361,11 @@ export default async function handler(req, res) {
 
                 return res.status(200).json({
 
-                    success: true,
+                    success:
+                        true,
 
-                    triggerWatering: true
+                    triggerWatering:
+                        true
                 });
             }
 
@@ -362,15 +402,17 @@ export default async function handler(req, res) {
 
                 return res.status(200).json({
 
-                    success: true,
+                    success:
+                        true,
 
-                    triggerWatering: false
+                    triggerWatering:
+                        false
                 });
             }
 
 
             // ======================================
-            // OLD TOGGLE API
+            // TOGGLE WATERING
             // ======================================
 
             if (
@@ -426,7 +468,8 @@ export default async function handler(req, res) {
 
                 return res.status(200).json({
 
-                    success: true,
+                    success:
+                        true,
 
                     triggerWatering:
                         newState
@@ -435,7 +478,8 @@ export default async function handler(req, res) {
 
 
             return res.status(200).json({
-                status: 'ok'
+                status:
+                    'ok'
             });
         }
 
@@ -489,7 +533,8 @@ export default async function handler(req, res) {
 
 
         return res.status(405).json({
-            error: 'Method Not Allowed'
+            error:
+                'Method Not Allowed'
         });
 
 
