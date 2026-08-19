@@ -65,6 +65,7 @@ export default async function handler(req, res) {
             }
 
             // 3. Dashboard สั่งสลับการรดน้ำ (Toggle Watering)
+            // 3. Dashboard สั่งสลับการรดน้ำ (Toggle Watering)
             if (body.action === 'toggle_watering') {
                 const { data, error: getErr } = await supabase
                     .from('system_state')
@@ -85,7 +86,6 @@ export default async function handler(req, res) {
 
                 return res.status(200).json({ success: true, triggerWatering: newState });
             }
-
             return res.status(200).json({ status: 'ok' });
         }
 
