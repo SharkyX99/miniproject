@@ -1,117 +1,457 @@
 import { createClient } from '@supabase/supabase-js';
 
 export default async function handler(req, res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === 'OPTIONS') return res.status(200).end();
+    // ==========================================
+    // CORS
+    // ==========================================
 
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_KEY;
+    res.setHeader(
+        'Access-Control-Allow-Origin',
+        '*'
+    );
 
-    if (!supabaseUrl || !supabaseKey) {
-        return res.status(500).json({ error: 'Missing Supabase Environment Variables' });
+    res.setHeader(
+        'Access-Control-Allow-Methods',
+        'GET, POST, OPTIONS'
+    );
+
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type'
+    );
+
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // ==========================================
+    // SUPABASE
+    // ==========================================
+
+    const supabaseUrl =
+        process.env.SUPABASE_URL;
+
+    const supabaseKey =
+        process.env.SUPABASE_KEY;
+
+
+    if (!supabaseUrl || !supabaseKey) {
+
+        return res.status(500).json({
+            error:
+                'Missing Supabase Environment Variables'
+        });
+    }
+
+
+    const supabase =
+        createClient(
+            supabaseUrl,
+            supabaseKey
+        );
+
 
     try {
+
+        // ======================================
+        // POST
+        // ======================================
+
         if (req.method === 'POST') {
-            // แปลง body ป้องกัน crash จากการส่ง JSON ผิดรูปแบบ
+
             let body = req.body;
+
+
+            // รองรับ body ที่เป็น String
+
             if (typeof body === 'string') {
+
                 try {
+
                     body = JSON.parse(body);
+
                 } catch (e) {
+
                     body = {};
                 }
             }
+
+
             body = body || {};
 
-            // 1. ESP32 อัปเดตสถานะเซนเซอร์
-            if (body.action === 'esp32_update') {
-                await supabase
+
+            // ======================================
+            // ESP32 UPDATE
+            // ======================================
+
+            if (
+                body.action ===
+                'esp32_update'
+            ) {
+
+                // ----------------------------------
+                // อัปเดต sensor
+                // ----------------------------------
+
+                const {
+                    error: updateError
+                } = await supabase
+
                     .from('system_state')
+
                     .update({
-                        temp: body.temp ?? 0,
-                        hum: body.hum ?? 0,
-                        relay: body.relay ?? false,
-                        updated_at: new Date()
+
+                        temp:
+                            body.temp ?? 0,
+
+                        hum:
+                            body.hum ?? 0,
+
+                        relay:
+                            body.relay ?? false,
+
+                        updated_at:
+                            new Date()
                     })
+
                     .eq('id', 1);
 
-                const { data } = await supabase
+
+                if (updateError) {
+                    throw updateError;
+                }
+
+
+                // ----------------------------------
+                // อ่านคำสั่งปัจจุบัน
+                // ----------------------------------
+
+                const {
+                    data,
+                    error
+                } = await supabase
+
                     .from('system_state')
-                    .select('mode, trigger_watering')
+
+                    .select(
+                        'mode, trigger_watering'
+                    )
+
                     .eq('id', 1)
+
                     .single();
 
+
+                if (error) {
+                    throw error;
+                }
+
+
                 return res.status(200).json({
-                    mode: data?.mode || 0,
-                    triggerWatering: data?.trigger_watering || false
+
+                    mode:
+                        data?.mode ?? 0,
+
+                    triggerWatering:
+                        data?.trigger_watering ?? false,
+
+                    duration: 10000
                 });
             }
 
-            // 2. Dashboard สั่งเปลี่ยนโหมด (Manual / Timer / Sensor)
-            if (body.action === 'set_mode') {
-                const { error } = await supabase
+
+            // ======================================
+            // SET MODE
+            // ======================================
+
+            if (
+                body.action ===
+                'set_mode'
+            ) {
+
+                const mode =
+                    Number(body.mode);
+
+
+                if (
+                    mode < 0 ||
+                    mode > 2
+                ) {
+
+                    return res.status(400).json({
+                        error:
+                            'Invalid mode'
+                    });
+                }
+
+
+                const {
+                    error
+                } = await supabase
+
                     .from('system_state')
-                    .update({ mode: Number(body.mode) })
+
+                    .update({
+
+                        mode: mode
+
+                    })
+
                     .eq('id', 1);
 
-                if (error) throw error;
-                return res.status(200).json({ success: true, mode: body.mode });
+
+                if (error) {
+                    throw error;
+                }
+
+
+                // ----------------------------------
+                // ถ้าเปลี่ยนออกจาก Manual
+                // ให้ยกเลิก START เดิม
+                // ----------------------------------
+
+                if (mode !== 0) {
+
+                    await supabase
+
+                        .from('system_state')
+
+                        .update({
+
+                            trigger_watering:
+                                false
+
+                        })
+
+                        .eq('id', 1);
+                }
+
+
+                return res.status(200).json({
+
+                    success: true,
+
+                    mode: mode
+                });
             }
 
-            // 3. Dashboard สั่งสลับการรดน้ำ (Toggle Watering)
-            // 3. Dashboard สั่งสลับการรดน้ำ (Toggle Watering)
-            if (body.action === 'toggle_watering') {
-                const { data, error: getErr } = await supabase
+
+            // ======================================
+            // START WATERING
+            // ======================================
+
+            if (
+                body.action ===
+                'start_watering'
+            ) {
+
+                const {
+                    error
+                } = await supabase
+
                     .from('system_state')
-                    .select('trigger_watering')
+
+                    .update({
+
+                        trigger_watering:
+                            true
+
+                    })
+
+                    .eq('id', 1);
+
+
+                if (error) {
+                    throw error;
+                }
+
+
+                return res.status(200).json({
+
+                    success: true,
+
+                    triggerWatering: true
+                });
+            }
+
+
+            // ======================================
+            // STOP WATERING
+            // ======================================
+
+            if (
+                body.action ===
+                'stop_watering'
+            ) {
+
+                const {
+                    error
+                } = await supabase
+
+                    .from('system_state')
+
+                    .update({
+
+                        trigger_watering:
+                            false
+
+                    })
+
+                    .eq('id', 1);
+
+
+                if (error) {
+                    throw error;
+                }
+
+
+                return res.status(200).json({
+
+                    success: true,
+
+                    triggerWatering: false
+                });
+            }
+
+
+            // ======================================
+            // OLD TOGGLE API
+            // ======================================
+
+            if (
+                body.action ===
+                'toggle_watering'
+            ) {
+
+                const {
+                    data,
+                    error: getError
+                } = await supabase
+
+                    .from('system_state')
+
+                    .select(
+                        'trigger_watering'
+                    )
+
                     .eq('id', 1)
+
                     .single();
 
-                if (getErr) throw getErr;
 
-                const newState = !data?.trigger_watering;
+                if (getError) {
+                    throw getError;
+                }
 
-                const { error: updateErr } = await supabase
+
+                const newState =
+                    !data?.trigger_watering;
+
+
+                const {
+                    error: updateError
+                } = await supabase
+
                     .from('system_state')
-                    .update({ trigger_watering: newState })
+
+                    .update({
+
+                        trigger_watering:
+                            newState
+
+                    })
+
                     .eq('id', 1);
 
-                if (updateErr) throw updateErr;
 
-                return res.status(200).json({ success: true, triggerWatering: newState });
+                if (updateError) {
+                    throw updateError;
+                }
+
+
+                return res.status(200).json({
+
+                    success: true,
+
+                    triggerWatering:
+                        newState
+                });
             }
-            return res.status(200).json({ status: 'ok' });
-        }
 
-        // 4. GET Request - ดึงข้อมูลไปโชว์บนหน้าเว็บ
-        if (req.method === 'GET') {
-            const { data, error } = await supabase
-                .from('system_state')
-                .select('*')
-                .eq('id', 1)
-                .single();
-
-            if (error) throw error;
 
             return res.status(200).json({
-                temp: data.temp,
-                hum: data.hum,
-                relay: data.relay,
-                mode: data.mode,
-                triggerWatering: data.trigger_watering
+                status: 'ok'
             });
         }
 
-        return res.status(200).json({ status: 'ok' });
+
+        // ======================================
+        // GET
+        // ======================================
+
+        if (req.method === 'GET') {
+
+            const {
+                data,
+                error
+            } = await supabase
+
+                .from('system_state')
+
+                .select('*')
+
+                .eq('id', 1)
+
+                .single();
+
+
+            if (error) {
+                throw error;
+            }
+
+
+            return res.status(200).json({
+
+                temp:
+                    data.temp,
+
+                hum:
+                    data.hum,
+
+                relay:
+                    data.relay,
+
+                mode:
+                    data.mode,
+
+                triggerWatering:
+                    data.trigger_watering,
+
+                updatedAt:
+                    data.updated_at
+            });
+        }
+
+
+        return res.status(405).json({
+            error: 'Method Not Allowed'
+        });
+
 
     } catch (err) {
-        console.error('API Error:', err);
-        return res.status(500).json({ error: err.message });
+
+        console.error(
+            'API Error:',
+            err
+        );
+
+
+        return res.status(500).json({
+
+            error:
+                err.message
+        });
     }
 }
