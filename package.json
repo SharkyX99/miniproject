@@ -2,6 +2,6 @@
   "name": "sprout-hydro-system",
   "version": "1.0.0",
   "dependencies": {
-    "@upstash/redis": "^1.28.0"
+    "@supabase/supabase-js": "^2.39.0"
   }
 }
