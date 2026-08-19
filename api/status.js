@@ -86,78 +86,131 @@ export default async function handler(req, res) {
             // ESP32 UPDATE
             // ======================================
 
-            if (
-                body.action ===
-                'esp32_update'
-            ) {
+            if (body.action === 'esp32_update') {
 
-                // ----------------------------------
-                // อัปเดต sensor
-                // ----------------------------------
+                // ==========================================
+                // 1. อัปเดตสถานะ ESP32
+                // ==========================================
 
-                const {
-                    error: updateError
-                } = await supabase
+                const { data: currentState, error: readError } =
+                    await supabase
+                        .from('system_state')
+                        .select('mode, trigger_watering')
+                        .eq('id', 1)
+                        .single();
 
-                    .from('system_state')
+                if (readError) {
+                    throw readError;
+                }
 
-                    .update({
 
-                        temp:
-                            body.temp ?? 0,
+                // ==========================================
+                // 2. อัปเดต Sensor + Relay
+                // ==========================================
 
-                        hum:
-                            body.hum ?? 0,
-
-                        relay:
-                            body.relay ?? false,
-
-                        updated_at:
-                            new Date()
-                    })
-
-                    .eq('id', 1);
-
+                const { error: updateError } =
+                    await supabase
+                        .from('system_state')
+                        .update({
+                            temp: body.temp ?? 0,
+                            hum: body.hum ?? 0,
+                            relay: body.relay ?? false,
+                            updated_at: new Date()
+                        })
+                        .eq('id', 1);
 
                 if (updateError) {
                     throw updateError;
                 }
 
 
-                // ----------------------------------
-                // อ่านคำสั่งปัจจุบัน
-                // ----------------------------------
+                // ==========================================
+                // 3. ตรวจสอบคำสั่ง START
+                // ==========================================
 
-                const {
-                    data,
-                    error
-                } = await supabase
-
-                    .from('system_state')
-
-                    .select(
-                        'mode, trigger_watering'
-                    )
-
-                    .eq('id', 1)
-
-                    .single();
+                const triggerWatering =
+                    currentState?.trigger_watering ?? false;
 
 
-                if (error) {
-                    throw error;
+                // ==========================================
+                // 4. ถ้า ESP32 ยังไม่ได้เปิด Relay
+                //    และ Dashboard สั่ง START
+                //    ให้ส่ง START กลับไป
+                // ==========================================
+
+                if (
+                    triggerWatering === true &&
+                    body.relay === false
+                ) {
+
+                    return res.status(200).json({
+
+                        mode:
+                            currentState?.mode ?? 0,
+
+                        triggerWatering:
+                            true,
+
+                        duration:
+                            10000
+                    });
                 }
 
+
+                // ==========================================
+                // 5. ถ้า ESP32 เปิด Relay แล้ว
+                //    แสดงว่ารับคำสั่ง START ไปแล้ว
+                //
+                //    RESET trigger_watering
+                // ==========================================
+
+                if (
+                    triggerWatering === true &&
+                    body.relay === true
+                ) {
+
+                    const { error: resetError } =
+                        await supabase
+                            .from('system_state')
+                            .update({
+                                trigger_watering: false,
+                                updated_at: new Date()
+                            })
+                            .eq('id', 1);
+
+                    if (resetError) {
+                        throw resetError;
+                    }
+
+
+                    return res.status(200).json({
+
+                        mode:
+                            currentState?.mode ?? 0,
+
+                        triggerWatering:
+                            false,
+
+                        duration:
+                            10000
+                    });
+                }
+
+
+                // ==========================================
+                // 6. ไม่มีคำสั่ง START
+                // ==========================================
 
                 return res.status(200).json({
 
                     mode:
-                        data?.mode ?? 0,
+                        currentState?.mode ?? 0,
 
                     triggerWatering:
-                        data?.trigger_watering ?? false,
+                        false,
 
-                    duration: 10000
+                    duration:
+                        10000
                 });
             }
 
