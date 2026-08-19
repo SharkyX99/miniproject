@@ -2,9 +2,9 @@ import { createClient } from '@supabase/supabase-js';
 
 export default async function handler(req, res) {
 
-    // ==========================================
+    // =========================================
     // CORS
-    // ==========================================
+    // =========================================
 
     res.setHeader(
         'Access-Control-Allow-Origin',
@@ -26,16 +26,15 @@ export default async function handler(req, res) {
     }
 
 
-    // ==========================================
+    // =========================================
     // SUPABASE
-    // ==========================================
+    // =========================================
 
     const supabaseUrl =
         process.env.SUPABASE_URL;
 
     const supabaseKey =
         process.env.SUPABASE_KEY;
-
 
     if (!supabaseUrl || !supabaseKey) {
 
@@ -55,16 +54,14 @@ export default async function handler(req, res) {
 
     try {
 
-        // ======================================
+        // =========================================
         // POST
-        // ======================================
+        // =========================================
 
         if (req.method === 'POST') {
 
             let body = req.body;
 
-
-            // รองรับ body ที่เป็น String
 
             if (typeof body === 'string') {
 
@@ -82,22 +79,19 @@ export default async function handler(req, res) {
             body = body || {};
 
 
-            // ======================================
+            // =========================================
             // ESP32 UPDATE
-            // ======================================
+            // =========================================
 
             if (
                 body.action ===
                 'esp32_update'
             ) {
 
-                // ----------------------------------
-                // อ่านสถานะปัจจุบันก่อน
-                // ----------------------------------
-
+                // อ่านคำสั่งปัจจุบัน
                 const {
-                    data: currentState,
-                    error: readError
+                    data,
+                    error
                 } = await supabase
 
                     .from('system_state')
@@ -111,15 +105,12 @@ export default async function handler(req, res) {
                     .single();
 
 
-                if (readError) {
-                    throw readError;
+                if (error) {
+                    throw error;
                 }
 
 
-                // ----------------------------------
-                // อัปเดตข้อมูลจาก ESP32
-                // ----------------------------------
-
+                // อัปเดต sensor + relay
                 const {
                     error: updateError
                 } = await supabase
@@ -150,101 +141,16 @@ export default async function handler(req, res) {
                 }
 
 
-                // ----------------------------------
-                // อ่านคำสั่ง
-                // ----------------------------------
-
-                const triggerWatering =
-                    currentState?.trigger_watering
-                    ?? false;
-
-
-                // ----------------------------------
-                // ESP32 ยังไม่ได้เปิด Relay
-                // และ Dashboard สั่ง START
-                // ----------------------------------
-
-                if (
-                    triggerWatering === true &&
-                    body.relay === false
-                ) {
-
-                    return res.status(200).json({
-
-                        mode:
-                            currentState?.mode
-                            ?? 0,
-
-                        triggerWatering:
-                            true,
-
-                        duration:
-                            10000
-                    });
-                }
-
-
-                // ----------------------------------
-                // ESP32 เปิด Relay แล้ว
-                // แปลว่า START ถูกนำไปใช้แล้ว
-                // ----------------------------------
-
-                if (
-                    triggerWatering === true &&
-                    body.relay === true
-                ) {
-
-                    const {
-                        error: resetError
-                    } = await supabase
-
-                        .from('system_state')
-
-                        .update({
-
-                            trigger_watering:
-                                false,
-
-                            updated_at:
-                                new Date()
-
-                        })
-
-                        .eq('id', 1);
-
-
-                    if (resetError) {
-                        throw resetError;
-                    }
-
-
-                    return res.status(200).json({
-
-                        mode:
-                            currentState?.mode
-                            ?? 0,
-
-                        triggerWatering:
-                            false,
-
-                        duration:
-                            10000
-                    });
-                }
-
-
-                // ----------------------------------
-                // ไม่มีคำสั่ง START
-                // ----------------------------------
+                // ส่ง command กลับ ESP32
 
                 return res.status(200).json({
 
                     mode:
-                        currentState?.mode
-                        ?? 0,
+                        data?.mode ?? 0,
 
                     triggerWatering:
-                        false,
+                        data?.trigger_watering
+                        ?? false,
 
                     duration:
                         10000
@@ -252,9 +158,56 @@ export default async function handler(req, res) {
             }
 
 
-            // ======================================
+            // =========================================
+            // WATERING COMPLETE
+            // =========================================
+
+            if (
+                body.action ===
+                'watering_complete'
+            ) {
+
+                const {
+                    error
+                } = await supabase
+
+                    .from('system_state')
+
+                    .update({
+
+                        trigger_watering:
+                            false,
+
+                        relay:
+                            false,
+
+                        updated_at:
+                            new Date()
+
+                    })
+
+                    .eq('id', 1);
+
+
+                if (error) {
+                    throw error;
+                }
+
+
+                return res.status(200).json({
+
+                    success:
+                        true,
+
+                    triggerWatering:
+                        false
+                });
+            }
+
+
+            // =========================================
             // SET MODE
-            // ======================================
+            // =========================================
 
             if (
                 body.action ===
@@ -271,6 +224,7 @@ export default async function handler(req, res) {
                 ) {
 
                     return res.status(400).json({
+
                         error:
                             'Invalid mode'
                     });
@@ -286,7 +240,10 @@ export default async function handler(req, res) {
                     .update({
 
                         mode:
-                            mode
+                            mode,
+
+                        trigger_watering:
+                            false
 
                     })
 
@@ -295,26 +252,6 @@ export default async function handler(req, res) {
 
                 if (error) {
                     throw error;
-                }
-
-
-                // ถ้าเปลี่ยนออกจาก Manual
-                // ให้ยกเลิกคำสั่ง START
-
-                if (mode !== 0) {
-
-                    await supabase
-
-                        .from('system_state')
-
-                        .update({
-
-                            trigger_watering:
-                                false
-
-                        })
-
-                        .eq('id', 1);
                 }
 
 
@@ -329,9 +266,9 @@ export default async function handler(req, res) {
             }
 
 
-            // ======================================
+            // =========================================
             // START WATERING
-            // ======================================
+            // =========================================
 
             if (
                 body.action ===
@@ -365,14 +302,17 @@ export default async function handler(req, res) {
                         true,
 
                     triggerWatering:
-                        true
+                        true,
+
+                    duration:
+                        10000
                 });
             }
 
 
-            // ======================================
+            // =========================================
             // STOP WATERING
-            // ======================================
+            // =========================================
 
             if (
                 body.action ===
@@ -411,9 +351,9 @@ export default async function handler(req, res) {
             }
 
 
-            // ======================================
+            // =========================================
             // TOGGLE WATERING
-            // ======================================
+            // =========================================
 
             if (
                 body.action ===
@@ -472,21 +412,25 @@ export default async function handler(req, res) {
                         true,
 
                     triggerWatering:
-                        newState
+                        newState,
+
+                    duration:
+                        10000
                 });
             }
 
 
             return res.status(200).json({
+
                 status:
                     'ok'
             });
         }
 
 
-        // ======================================
+        // =========================================
         // GET
-        // ======================================
+        // =========================================
 
         if (req.method === 'GET') {
 
@@ -533,6 +477,7 @@ export default async function handler(req, res) {
 
 
         return res.status(405).json({
+
             error:
                 'Method Not Allowed'
         });
