@@ -22,32 +22,17 @@ export default async function handler(req, res) {
 
 
     // =====================================================
-    // ENVIRONMENT VARIABLES
+    // SUPABASE
     // =====================================================
 
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_KEY;
 
-    if (!supabaseUrl) {
-        console.error('ERROR: SUPABASE_URL is missing');
-
+    if (!supabaseUrl || !supabaseKey) {
         return res.status(500).json({
-            error: 'SUPABASE_URL is missing'
+            error: 'Missing Supabase Environment Variables'
         });
     }
-
-    if (!supabaseKey) {
-        console.error('ERROR: SUPABASE_KEY is missing');
-
-        return res.status(500).json({
-            error: 'SUPABASE_KEY is missing'
-        });
-    }
-
-
-    // =====================================================
-    // SUPABASE CLIENT
-    // =====================================================
 
     const supabase = createClient(
         supabaseUrl,
@@ -65,59 +50,24 @@ export default async function handler(req, res) {
 
             let body = req.body;
 
-            console.log('========== POST REQUEST ==========');
-            console.log('Method:', req.method);
-            console.log('Body:', body);
-
-
-            // ---------------------------------------------
-            // Parse JSON ถ้า body เป็น String
-            // ---------------------------------------------
-
             if (typeof body === 'string') {
-
                 try {
-
                     body = JSON.parse(body);
-
-                } catch (error) {
-
-                    console.error(
-                        'JSON PARSE ERROR:',
-                        error
-                    );
-
+                } catch (e) {
                     return res.status(400).json({
-                        error: 'Invalid JSON body'
+                        error: 'Invalid JSON'
                     });
                 }
             }
 
-
-            if (!body) {
-                body = {};
-            }
-
-
-            console.log(
-                'Action:',
-                body.action
-            );
+            body = body || {};
 
 
             // =================================================
             // ESP32 UPDATE
             // =================================================
 
-            if (
-                body.action ===
-                'esp32_update'
-            ) {
-
-                console.log(
-                    '========== ESP32 UPDATE =========='
-                );
-
+            if (body.action === 'esp32_update') {
 
                 const temp =
                     Number(body.temp ?? 0);
@@ -126,133 +76,98 @@ export default async function handler(req, res) {
                     Number(body.hum ?? 0);
 
                 const relay =
-                    Boolean(
-                        body.relay ?? false
-                    );
+                    Boolean(body.relay ?? false);
 
 
-                console.log(
-                    'Temp:',
-                    temp
-                );
-
-                console.log(
-                    'Hum:',
-                    hum
-                );
-
-                console.log(
-                    'Relay:',
-                    relay
-                );
-
-
-                // ---------------------------------------------
-                // UPDATE DATABASE
-                // ---------------------------------------------
-
+                // Update database
                 const {
                     error: updateError
                 } = await supabase
                     .from('system_state')
                     .update({
-
                         temp: temp,
-
                         hum: hum,
-
                         relay: relay,
-
-                        updated_at:
-                            new Date().toISOString()
-
+                        updated_at: new Date().toISOString()
                     })
                     .eq('id', 1);
 
 
                 if (updateError) {
-
                     console.error(
-                        'SUPABASE UPDATE ERROR:',
+                        'UPDATE ERROR:',
                         updateError
                     );
 
                     return res.status(500).json({
-
-                        error:
-                            updateError.message,
-
-                        code:
-                            updateError.code
-
+                        error: updateError.message,
+                        code: updateError.code
                     });
                 }
 
 
-                console.log(
-                    'SUPABASE UPDATE SUCCESS'
-                );
-
-
-                // ---------------------------------------------
-                // READ CURRENT SYSTEM STATE
-                // ---------------------------------------------
-
+                // ดึงข้อมูลแบบไม่ใช้ .single()
                 const {
                     data,
                     error: selectError
                 } = await supabase
                     .from('system_state')
-                    .select(
-                        'mode, trigger_watering'
-                    )
+                    .select('mode, trigger_watering')
                     .eq('id', 1)
-                    .single();
+                    .limit(1);
 
 
                 if (selectError) {
-
                     console.error(
-                        'SUPABASE SELECT ERROR:',
+                        'SELECT ERROR:',
                         selectError
                     );
 
                     return res.status(500).json({
-
-                        error:
-                            selectError.message,
-
-                        code:
-                            selectError.code
-
+                        error: selectError.message,
+                        code: selectError.code
                     });
                 }
 
 
-                console.log(
-                    'SYSTEM STATE:',
-                    data
-                );
+                // ถ้าไม่มี row ให้ใช้ค่า default
+                const state =
+                    data && data.length > 0
+                        ? data[0]
+                        : {
+                            mode: 0,
+                            trigger_watering: false
+                        };
 
 
                 const mode =
-                    Number(
-                        data?.mode ?? 0
-                    );
-
+                    Number(state.mode ?? 0);
 
                 const triggerWatering =
                     Boolean(
-                        data?.trigger_watering ??
-                        false
+                        state.trigger_watering ?? false
                     );
 
 
-                // ---------------------------------------------
-                // RESPONSE TO ESP32
-                // ---------------------------------------------
+                console.log(
+                    'ESP32:',
+                    temp,
+                    hum,
+                    relay
+                );
 
-                const response = {
+                console.log(
+                    'MODE:',
+                    mode
+                );
+
+                console.log(
+                    'TRIGGER:',
+                    triggerWatering
+                );
+
+
+                return res.status(200).json({
 
                     mode: mode,
 
@@ -261,18 +176,7 @@ export default async function handler(req, res) {
 
                     duration: 10000
 
-                };
-
-
-                console.log(
-                    'RESPONSE:',
-                    response
-                );
-
-
-                return res.status(200).json(
-                    response
-                );
+                });
             }
 
 
@@ -280,10 +184,7 @@ export default async function handler(req, res) {
             // SET MODE
             // =================================================
 
-            if (
-                body.action ===
-                'set_mode'
-            ) {
+            if (body.action === 'set_mode') {
 
                 const mode =
                     Number(body.mode);
@@ -294,12 +195,8 @@ export default async function handler(req, res) {
                     mode !== 1 &&
                     mode !== 2
                 ) {
-
                     return res.status(400).json({
-
-                        error:
-                            'Invalid mode. Use 0, 1 or 2.'
-
+                        error: 'Invalid mode'
                     });
                 }
 
@@ -309,12 +206,9 @@ export default async function handler(req, res) {
                 } = await supabase
                     .from('system_state')
                     .update({
-
                         mode: mode,
-
                         updated_at:
                             new Date().toISOString()
-
                     })
                     .eq('id', 1);
 
@@ -325,11 +219,8 @@ export default async function handler(req, res) {
 
 
                 return res.status(200).json({
-
                     success: true,
-
                     mode: mode
-
                 });
             }
 
@@ -338,21 +229,16 @@ export default async function handler(req, res) {
             // TOGGLE WATERING
             // =================================================
 
-            if (
-                body.action ===
-                'toggle_watering'
-            ) {
+            if (body.action === 'toggle_watering') {
 
                 const {
                     data,
                     error
                 } = await supabase
                     .from('system_state')
-                    .select(
-                        'trigger_watering'
-                    )
+                    .select('trigger_watering')
                     .eq('id', 1)
-                    .single();
+                    .limit(1);
 
 
                 if (error) {
@@ -360,10 +246,16 @@ export default async function handler(req, res) {
                 }
 
 
+                const currentState =
+                    data && data.length > 0
+                        ? Boolean(
+                            data[0].trigger_watering
+                        )
+                        : false;
+
+
                 const newState =
-                    !Boolean(
-                        data?.trigger_watering
-                    );
+                    !currentState;
 
 
                 const {
@@ -371,13 +263,10 @@ export default async function handler(req, res) {
                 } = await supabase
                     .from('system_state')
                     .update({
-
                         trigger_watering:
                             newState,
-
                         updated_at:
                             new Date().toISOString()
-
                     })
                     .eq('id', 1);
 
@@ -402,10 +291,7 @@ export default async function handler(req, res) {
             // WATERING COMPLETE
             // =================================================
 
-            if (
-                body.action ===
-                'watering_complete'
-            ) {
+            if (body.action === 'watering_complete') {
 
                 const {
                     error
@@ -435,38 +321,23 @@ export default async function handler(req, res) {
 
                     success: true,
 
-                    triggerWatering:
-                        false
+                    triggerWatering: false
 
                 });
             }
 
 
-            // =================================================
-            // UNKNOWN ACTION
-            // =================================================
-
             return res.status(200).json({
-
-                status: 'ok',
-
-                message:
-                    'Unknown or no action'
-
+                status: 'ok'
             });
         }
 
 
-        // =====================================================
+        // =================================================
         // GET
-        // =====================================================
+        // =================================================
 
         if (req.method === 'GET') {
-
-            console.log(
-                '========== GET SYSTEM STATE =========='
-            );
-
 
             const {
                 data,
@@ -475,7 +346,7 @@ export default async function handler(req, res) {
                 .from('system_state')
                 .select('*')
                 .eq('id', 1)
-                .single();
+                .limit(1);
 
 
             if (error) {
@@ -483,53 +354,51 @@ export default async function handler(req, res) {
             }
 
 
+            const state =
+                data && data.length > 0
+                    ? data[0]
+                    : {
+                        temp: 0,
+                        hum: 0,
+                        relay: false,
+                        mode: 0,
+                        trigger_watering: false
+                    };
+
+
             return res.status(200).json({
 
-                temp:
-                    data.temp,
+                temp: state.temp,
 
-                hum:
-                    data.hum,
+                hum: state.hum,
 
-                relay:
-                    data.relay,
+                relay: state.relay,
 
-                mode:
-                    data.mode,
+                mode: state.mode,
 
                 triggerWatering:
-                    data.trigger_watering
+                    state.trigger_watering
 
             });
         }
 
 
-        // =====================================================
-        // OTHER METHODS
-        // =====================================================
-
         return res.status(405).json({
-
-            error:
-                'Method Not Allowed'
-
+            error: 'Method Not Allowed'
         });
 
 
     } catch (err) {
 
         console.error(
-            '========== API CRASH =========='
+            'API ERROR:',
+            err
         );
 
-        console.error(err);
-
         return res.status(500).json({
-
             error:
                 err?.message ||
                 'Internal Server Error'
-
         });
     }
 }
