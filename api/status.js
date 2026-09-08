@@ -69,20 +69,16 @@ export default async function handler(req, res) {
 
             if (body.action === 'esp32_update') {
 
-                const temp =
-                    Number(body.temp ?? 0);
-
-                const hum =
-                    Number(body.hum ?? 0);
-
-                const relay =
-                    Boolean(body.relay ?? false);
+                const temp = Number(body.temp ?? 0);
+                const hum = Number(body.hum ?? 0);
+                const relay = Boolean(body.relay ?? false);
 
 
-                // Update database
-                const {
-                    error: updateError
-                } = await supabase
+                // ---------------------------------------------
+                // 1. Update current system state
+                // ---------------------------------------------
+
+                const { error: updateError } = await supabase
                     .from('system_state')
                     .update({
                         temp: temp,
@@ -92,21 +88,34 @@ export default async function handler(req, res) {
                     })
                     .eq('id', 1);
 
-
                 if (updateError) {
-                    console.error(
-                        'UPDATE ERROR:',
-                        updateError
-                    );
-
-                    return res.status(500).json({
-                        error: updateError.message,
-                        code: updateError.code
-                    });
+                    throw updateError;
                 }
 
 
-                // ดึงข้อมูลแบบไม่ใช้ .single()
+                // ---------------------------------------------
+                // 2. Save temperature history
+                // ---------------------------------------------
+
+                const { error: logError } = await supabase
+                    .from('temperature_logs')
+                    .insert({
+                        temperature: temp,
+                        humidity: hum
+                    });
+
+                if (logError) {
+                    console.error(
+                        'Temperature Log Error:',
+                        logError
+                    );
+                }
+
+
+                // ---------------------------------------------
+                // 3. Get current mode / command
+                // ---------------------------------------------
+
                 const {
                     data,
                     error: selectError
@@ -116,21 +125,11 @@ export default async function handler(req, res) {
                     .eq('id', 1)
                     .limit(1);
 
-
                 if (selectError) {
-                    console.error(
-                        'SELECT ERROR:',
-                        selectError
-                    );
-
-                    return res.status(500).json({
-                        error: selectError.message,
-                        code: selectError.code
-                    });
+                    throw selectError;
                 }
 
 
-                // ถ้าไม่มี row ให้ใช้ค่า default
                 const state =
                     data && data.length > 0
                         ? data[0]
@@ -140,45 +139,19 @@ export default async function handler(req, res) {
                         };
 
 
-                const mode =
-                    Number(state.mode ?? 0);
-
-                const triggerWatering =
-                    Boolean(
-                        state.trigger_watering ?? false
-                    );
-
-
-                console.log(
-                    'ESP32:',
-                    temp,
-                    hum,
-                    relay
-                );
-
-                console.log(
-                    'MODE:',
-                    mode
-                );
-
-                console.log(
-                    'TRIGGER:',
-                    triggerWatering
-                );
-
-
                 return res.status(200).json({
 
-                    mode: mode,
+                    mode: Number(state.mode ?? 0),
 
                     triggerWatering:
-                        triggerWatering,
+                        Boolean(
+                            state.trigger_watering ?? false
+                        ),
 
                     duration: 10000
 
                 });
             }
-
 
             // =================================================
             // SET MODE
@@ -333,11 +306,43 @@ export default async function handler(req, res) {
         }
 
 
-        // =================================================
-        // GET
-        // =================================================
-
         if (req.method === 'GET') {
+
+            // =============================================
+            // GET TEMPERATURE HISTORY
+            // =============================================
+
+            if (req.query.history === 'true') {
+
+                const {
+                    data,
+                    error
+                } = await supabase
+                    .from('temperature_logs')
+                    .select(
+                        'temperature, humidity, recorded_at'
+                    )
+                    .order(
+                        'recorded_at',
+                        {
+                            ascending: true
+                        }
+                    )
+                    .limit(500);
+
+                if (error) {
+                    throw error;
+                }
+
+                return res.status(200).json({
+                    history: data || []
+                });
+            }
+
+
+            // =============================================
+            // CURRENT SYSTEM STATE
+            // =============================================
 
             const {
                 data,
@@ -347,7 +352,6 @@ export default async function handler(req, res) {
                 .select('*')
                 .eq('id', 1)
                 .limit(1);
-
 
             if (error) {
                 throw error;
@@ -381,24 +385,3 @@ export default async function handler(req, res) {
 
             });
         }
-
-
-        return res.status(405).json({
-            error: 'Method Not Allowed'
-        });
-
-
-    } catch (err) {
-
-        console.error(
-            'API ERROR:',
-            err
-        );
-
-        return res.status(500).json({
-            error:
-                err?.message ||
-                'Internal Server Error'
-        });
-    }
-}
