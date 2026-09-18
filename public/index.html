@@ -714,11 +714,11 @@
         }
 
         // สร้างแท็บเลือกวัน (วันนี้ ย้อนหลังได้ 5 วัน)
+        // ใช้ label แบบสัมพัทธ์ (TODAY, -1D, -2D...) ไม่ใช่วันที่ตายตัว
+        // เพื่อไม่ต้องมาคอยแก้ทุกวัน
         function renderDayTabs() {
             const container = document.getElementById('dayTabs');
             container.innerHTML = '';
-
-            const today = todayBangkokStr();
 
             for (let i = 0; i < RETENTION_DAYS; i++) {
                 const d = new Date();
@@ -727,7 +727,8 @@
 
                 const tab = document.createElement('div');
                 tab.className = 'day-tab' + (dateStr === currentDate ? ' active' : '');
-                tab.innerText = i === 0 ? 'TODAY' : dateStr.slice(5); // MM-DD
+                tab.innerText = i === 0 ? 'TODAY' : ('-' + i + 'D');
+                tab.title = dateStr; // hover ดูวันที่จริงได้
                 tab.onclick = () => {
                     currentDate = dateStr;
                     renderDayTabs();
