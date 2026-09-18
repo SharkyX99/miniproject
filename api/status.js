@@ -1,5 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
+// เก็บข้อมูลลง temperature_logs ทุกกี่นาที (ปรับได้ตามต้องการ)
+const LOG_INTERVAL_MINUTES = 5;
+
 export default async function handler(req, res) {
 
     // =====================================================
@@ -95,20 +98,43 @@ export default async function handler(req, res) {
 
                 // ---------------------------------------------
                 // 2. Save temperature history
+                //    (บันทึกทุก LOG_INTERVAL_MINUTES นาที เท่านั้น
+                //     กันไม่ให้ตาราง log บวมเร็วเกินไป)
                 // ---------------------------------------------
 
-                const { error: logError } = await supabase
+                const { data: lastLogRows } = await supabase
                     .from('temperature_logs')
-                    .insert({
-                        temperature: temp,
-                        humidity: hum
-                    });
+                    .select('recorded_at')
+                    .order('recorded_at', { ascending: false })
+                    .limit(1);
 
-                if (logError) {
-                    console.error(
-                        'Temperature Log Error:',
-                        logError
-                    );
+                let shouldLog = true;
+
+                if (lastLogRows && lastLogRows.length > 0) {
+                    const lastTime = new Date(
+                        lastLogRows[0].recorded_at
+                    ).getTime();
+                    const minutesSinceLastLog =
+                        (Date.now() - lastTime) / 60000;
+
+                    shouldLog =
+                        minutesSinceLastLog >= LOG_INTERVAL_MINUTES;
+                }
+
+                if (shouldLog) {
+                    const { error: logError } = await supabase
+                        .from('temperature_logs')
+                        .insert({
+                            temperature: temp,
+                            humidity: hum
+                        });
+
+                    if (logError) {
+                        console.error(
+                            'Temperature Log Error:',
+                            logError
+                        );
+                    }
                 }
 
 
@@ -314,6 +340,13 @@ export default async function handler(req, res) {
 
             if (req.query.history === 'true') {
 
+                // ดึง "ล่าสุด" N จุด (ค่า default = 288 จุด
+                // ~1 วัน ถ้าเก็บทุก 5 นาที) แล้วเรียงกลับเป็น
+                // เก่า -> ใหม่ ให้กราฟวาดจากซ้ายไปขวาถูกต้อง
+                const requestedLimit = Number(req.query.limit);
+                const pointLimit =
+                    requestedLimit > 0 ? requestedLimit : 288;
+
                 const {
                     data,
                     error
@@ -325,17 +358,17 @@ export default async function handler(req, res) {
                     .order(
                         'recorded_at',
                         {
-                            ascending: true
+                            ascending: false
                         }
                     )
-                    .limit(500);
+                    .limit(pointLimit);
 
                 if (error) {
                     throw error;
                 }
 
                 return res.status(200).json({
-                    history: data || []
+                    history: (data || []).reverse()
                 });
             }
 
