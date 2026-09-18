@@ -40,29 +40,6 @@ export default async function handler(req, res) {
     );
 
 
-    // =====================================================
-    // TEMP DEBUG - ลบทิ้งทีหลังได้ ใช้เช็คว่า env ที่ Vercel
-    // ใช้จริงตรงกับโปรเจกต์ Supabase ที่คุณเปิดดูอยู่ไหม
-    // เรียกผ่าน: /api/status?debug=1
-    // =====================================================
-
-    if (req.query.debug === '1') {
-        const { data: dbgData, error: dbgError, count } =
-            await supabase
-                .from('system_state')
-                .select('*', { count: 'exact' });
-
-        return res.status(200).json({
-            supabaseUrlUsed: supabaseUrl,
-            supabaseKeyPrefix:
-                supabaseKey ? supabaseKey.slice(0, 8) + '...' : null,
-            rowCountInSystemState: count,
-            rawRows: dbgData,
-            queryError: dbgError
-        });
-    }
-
-
     try {
 
         // =================================================
