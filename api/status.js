@@ -385,3 +385,15 @@ export default async function handler(req, res) {
 
             });
         }
+
+    } catch (error) {
+
+        console.error('API ERROR:', error);
+
+        return res.status(500).json({
+            error: 'Internal Server Error',
+            message: error?.message || String(error),
+            details: error
+        });
+    }
+}
