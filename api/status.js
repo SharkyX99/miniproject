@@ -1,7 +1,26 @@
 import { createClient } from '@supabase/supabase-js';
 
 // เก็บข้อมูลลง temperature_logs ทุกกี่นาที (ปรับได้ตามต้องการ)
-const LOG_INTERVAL_MINUTES = 5;
+const LOG_INTERVAL_MINUTES = 30;
+
+// เก็บข้อมูลย้อนหลังไว้กี่วัน (เก่ากว่านี้จะถูกลบทิ้งอัตโนมัติ)
+const RETENTION_DAYS = 5;
+
+// คืนวันที่ปัจจุบันตามเวลาไทย รูปแบบ YYYY-MM-DD
+function todayBangkok() {
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Bangkok'
+    }).format(new Date());
+}
+
+// คืนช่วงเวลาเริ่ม/สิ้นสุดของ "วัน" ตามเวลาไทย (00:00 - 23:59:59.999)
+// เป็น ISO string (+07:00) สำหรับใช้ query timestamptz ใน Supabase
+function bangkokDayRange(dateStr) {
+    return {
+        start: new Date(`${dateStr}T00:00:00.000+07:00`).toISOString(),
+        end: new Date(`${dateStr}T23:59:59.999+07:00`).toISOString()
+    };
+}
 
 export default async function handler(req, res) {
 
@@ -133,6 +152,25 @@ export default async function handler(req, res) {
                         console.error(
                             'Temperature Log Error:',
                             logError
+                        );
+                    }
+
+                    // ลบข้อมูลที่เก่ากว่า RETENTION_DAYS วัน
+                    // (ทำเฉพาะตอนที่เพิ่งบันทึกใหม่ พอครับ
+                    // ไม่ต้องเช็คทุก request)
+                    const cutoff = new Date(
+                        Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
+                    ).toISOString();
+
+                    const { error: cleanupError } = await supabase
+                        .from('temperature_logs')
+                        .delete()
+                        .lt('recorded_at', cutoff);
+
+                    if (cleanupError) {
+                        console.error(
+                            'Cleanup Error:',
+                            cleanupError
                         );
                     }
                 }
@@ -340,12 +378,33 @@ export default async function handler(req, res) {
 
             if (req.query.history === 'true') {
 
-                // ดึง "ล่าสุด" N จุด (ค่า default = 288 จุด
-                // ~1 วัน ถ้าเก็บทุก 5 นาที) แล้วเรียงกลับเป็น
-                // เก่า -> ใหม่ ให้กราฟวาดจากซ้ายไปขวาถูกต้อง
-                const requestedLimit = Number(req.query.limit);
-                const pointLimit =
-                    requestedLimit > 0 ? requestedLimit : 288;
+                // รับ ?date=YYYY-MM-DD (เวลาไทย) ถ้าไม่ส่งมา
+                // ใช้วันนี้ (เวลาไทย) เป็นค่า default
+                const requestedDate = req.query.date;
+                const validFormat =
+                    typeof requestedDate === 'string' &&
+                    /^\d{4}-\d{2}-\d{2}$/.test(requestedDate);
+
+                const targetDate = validFormat
+                    ? requestedDate
+                    : todayBangkok();
+
+                // กันไม่ให้ดึงข้อมูลเก่าเกิน RETENTION_DAYS
+                // (เพราะยังไงก็ถูกลบไปแล้วจากตาราง)
+                const oldestAllowed = new Date(
+                    Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
+                );
+                const oldestAllowedStr =
+                    new Intl.DateTimeFormat('en-CA', {
+                        timeZone: 'Asia/Bangkok'
+                    }).format(oldestAllowed);
+
+                const finalDate =
+                    targetDate < oldestAllowedStr
+                        ? oldestAllowedStr
+                        : targetDate;
+
+                const { start, end } = bangkokDayRange(finalDate);
 
                 const {
                     data,
@@ -355,20 +414,22 @@ export default async function handler(req, res) {
                     .select(
                         'temperature, humidity, recorded_at'
                     )
+                    .gte('recorded_at', start)
+                    .lte('recorded_at', end)
                     .order(
                         'recorded_at',
                         {
-                            ascending: false
+                            ascending: true
                         }
-                    )
-                    .limit(pointLimit);
+                    );
 
                 if (error) {
                     throw error;
                 }
 
                 return res.status(200).json({
-                    history: (data || []).reverse()
+                    date: finalDate,
+                    history: data || []
                 });
             }
 

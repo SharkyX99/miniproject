@@ -343,6 +343,62 @@
             display: inline-block;
         }
 
+        .day-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        .day-tab {
+            background: var(--panel2);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 6px 12px;
+            font-size: 11px;
+            letter-spacing: 1px;
+            font-family: var(--font-digital);
+            color: var(--muted);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .day-tab:hover {
+            border-color: var(--m-lightblue);
+            color: var(--text);
+        }
+
+        .day-tab.active {
+            background: linear-gradient(135deg, var(--m-blue), var(--m-lightblue));
+            color: #fff;
+            border-color: var(--m-lightblue);
+        }
+
+        .btn-export {
+            width: 100%;
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: var(--panel2);
+            color: var(--text);
+            font-family: var(--font-digital);
+            font-size: 12px;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-export:hover {
+            border-color: var(--good);
+            color: var(--good);
+        }
+
+        .btn-export:disabled {
+            opacity: 0.5;
+            cursor: wait;
+        }
+
         .chart-wrap {
             position: relative;
             height: 260px;
@@ -371,6 +427,7 @@
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 
 <body>
@@ -430,13 +487,19 @@
                 <div class="chart-legend">
                     <span><i class="dot" style="background:#00A1E4;"></i>Temp (°C)</span>
                     <span><i class="dot" style="background:#0166B1;"></i>Humidity (%RH)</span>
-                    <span id="chartRange" style="color:var(--muted);"></span>
                 </div>
             </div>
+
+            <div class="day-tabs" id="dayTabs"></div>
+
             <div class="chart-wrap">
                 <canvas id="trendChart"></canvas>
                 <div class="chart-empty" id="chartEmpty">LOADING HISTORY...</div>
             </div>
+
+            <button class="btn-export" id="exportBtn" onclick="exportExcel()">
+                EXPORT TO EXCEL (LAST 5 DAYS)
+            </button>
         </div>
 
         <h3
@@ -524,7 +587,60 @@
         // TEMP / HUMIDITY TREND CHART
         // =====================================================
 
+        const RETENTION_DAYS = 5;
+        const SLOT_MINUTES = 30;
+        const SLOTS_PER_DAY = (24 * 60) / SLOT_MINUTES; // 48
+
         let trendChart = null;
+        let currentDate = null; // YYYY-MM-DD ที่กำลังดูอยู่ (เวลาไทย)
+
+        // สร้าง label 48 ช่อง: 00:00, 00:30, ... 23:30
+        function buildSlotLabels() {
+            const labels = [];
+            for (let i = 0; i < SLOTS_PER_DAY; i++) {
+                const h = Math.floor(i * SLOT_MINUTES / 60);
+                const m = (i * SLOT_MINUTES) % 60;
+                labels.push(
+                    String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0')
+                );
+            }
+            return labels;
+        }
+
+        // วันที่ปัจจุบันตามเวลาไทย รูปแบบ YYYY-MM-DD
+        function todayBangkokStr() {
+            return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date());
+        }
+
+        // แปลง Date เป็นเวลาไทย {h, m} สำหรับหาว่าตกช่องไหน
+        function bangkokHM(dateObj) {
+            const parts = new Intl.DateTimeFormat('en-GB', {
+                timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false
+            }).formatToParts(dateObj);
+            const h = Number(parts.find(p => p.type === 'hour').value);
+            const m = Number(parts.find(p => p.type === 'minute').value);
+            return { h, m };
+        }
+
+        // เอา log ดิบมาใส่ลงช่อง 48 ช่อง (ช่องไหนไม่มีข้อมูล = null)
+        // ถ้าเป็นวันนี้ และเวลายังไปไม่ถึงช่องนั้น ก็ปล่อยเป็น null
+        // เหมือนกราฟหุ้นที่ตลาดยังไม่เปิดถึงช่วงนั้น
+        function bucketizeDay(rows, dateStr) {
+            const tempSlots = new Array(SLOTS_PER_DAY).fill(null);
+            const humSlots = new Array(SLOTS_PER_DAY).fill(null);
+
+            rows.forEach(r => {
+                const d = new Date(r.recorded_at);
+                const { h, m } = bangkokHM(d);
+                const slotIndex = Math.floor((h * 60 + m) / SLOT_MINUTES);
+                if (slotIndex >= 0 && slotIndex < SLOTS_PER_DAY) {
+                    tempSlots[slotIndex] = Number(r.temperature);
+                    humSlots[slotIndex] = Number(r.humidity);
+                }
+            });
+
+            return { tempSlots, humSlots };
+        }
 
         function buildChart(labels, tempData, humData) {
             const ctx = document.getElementById('trendChart').getContext('2d');
@@ -551,6 +667,7 @@
                             tension: 0.3,
                             pointRadius: 0,
                             borderWidth: 2,
+                            spanGaps: false,
                             fill: true
                         },
                         {
@@ -562,6 +679,7 @@
                             tension: 0.3,
                             pointRadius: 0,
                             borderWidth: 2,
+                            spanGaps: false,
                             fill: true
                         }
                     ]
@@ -595,39 +713,114 @@
             });
         }
 
-        function fetchHistory() {
-            fetch('/api/status?history=true&limit=288')
+        // สร้างแท็บเลือกวัน (วันนี้ ย้อนหลังได้ 5 วัน)
+        function renderDayTabs() {
+            const container = document.getElementById('dayTabs');
+            container.innerHTML = '';
+
+            const today = todayBangkokStr();
+
+            for (let i = 0; i < RETENTION_DAYS; i++) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(d);
+
+                const tab = document.createElement('div');
+                tab.className = 'day-tab' + (dateStr === currentDate ? ' active' : '');
+                tab.innerText = i === 0 ? 'TODAY' : dateStr.slice(5); // MM-DD
+                tab.onclick = () => {
+                    currentDate = dateStr;
+                    renderDayTabs();
+                    fetchHistory(dateStr);
+                };
+                container.appendChild(tab);
+            }
+        }
+
+        function fetchHistory(dateStr) {
+            const targetDate = dateStr || todayBangkokStr();
+            currentDate = targetDate;
+
+            fetch('/api/status?history=true&date=' + targetDate)
                 .then(r => r.json())
                 .then(d => {
                     const rows = d.history || [];
                     const emptyEl = document.getElementById('chartEmpty');
-                    const rangeEl = document.getElementById('chartRange');
 
-                    if (rows.length === 0) {
-                        emptyEl.style.display = 'flex';
-                        emptyEl.innerText = 'NO DATA YET';
-                        rangeEl.innerText = '';
-                        return;
-                    }
+                    const labels = buildSlotLabels();
+                    const { tempSlots, humSlots } = bucketizeDay(rows, targetDate);
 
-                    emptyEl.style.display = 'none';
+                    emptyEl.style.display = rows.length === 0 ? 'flex' : 'none';
+                    emptyEl.innerText = 'NO DATA FOR ' + targetDate;
 
-                    const labels = rows.map(r => {
-                        const t = new Date(r.recorded_at);
-                        return t.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-                    });
-                    const tempData = rows.map(r => Number(r.temperature));
-                    const humData = rows.map(r => Number(r.humidity));
-
-                    rangeEl.innerText = labels[0] + ' - ' + labels[labels.length - 1] + ' (' + rows.length + ' pts)';
-
-                    buildChart(labels, tempData, humData);
+                    buildChart(labels, tempSlots, humSlots);
                 })
                 .catch(e => console.log(e));
         }
 
-        fetchHistory();
-        setInterval(fetchHistory, 60000); // รีเฟรชกราฟทุก 1 นาที
+        // =====================================================
+        // EXPORT TO EXCEL (ย้อนหลังสูงสุด 5 วัน)
+        // =====================================================
+
+        async function exportExcel() {
+            const btn = document.getElementById('exportBtn');
+            btn.disabled = true;
+            btn.innerText = 'EXPORTING...';
+
+            try {
+                const rowsOut = [];
+
+                for (let i = 0; i < RETENTION_DAYS; i++) {
+                    const d = new Date();
+                    d.setDate(d.getDate() - i);
+                    const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(d);
+
+                    const res = await fetch('/api/status?history=true&date=' + dateStr);
+                    const json = await res.json();
+                    const rows = json.history || [];
+
+                    rows.forEach(r => {
+                        const localTime = new Date(r.recorded_at).toLocaleString('th-TH', {
+                            timeZone: 'Asia/Bangkok',
+                            year: 'numeric', month: '2-digit', day: '2-digit',
+                            hour: '2-digit', minute: '2-digit', second: '2-digit'
+                        });
+                        rowsOut.push({
+                            'Date': dateStr,
+                            'Time (Bangkok)': localTime,
+                            'Temperature (C)': r.temperature,
+                            'Humidity (%RH)': r.humidity
+                        });
+                    });
+                }
+
+                if (rowsOut.length === 0) {
+                    alert('ยังไม่มีข้อมูลให้ export');
+                    return;
+                }
+
+                // เรียงจากเก่าไปใหม่
+                rowsOut.reverse();
+
+                const ws = XLSX.utils.json_to_sheet(rowsOut);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Temp-Humidity Log');
+
+                const fileDate = todayBangkokStr();
+                XLSX.writeFile(wb, 'sprout-system-log-' + fileDate + '.xlsx');
+
+            } catch (e) {
+                console.error(e);
+                alert('Export ไม่สำเร็จ: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'EXPORT TO EXCEL (LAST 5 DAYS)';
+            }
+        }
+
+        renderDayTabs();
+        fetchHistory(todayBangkokStr());
+        setInterval(() => fetchHistory(currentDate), 60000); // รีเฟรชกราฟทุก 1 นาที
     </script>
 </body>
 
