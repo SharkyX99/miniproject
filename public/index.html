@@ -5,7 +5,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>M PERFORMANCE | Bean Sprout Hydro-System (Cloud Control)</title>
-    <link rel="icon" type="image/png" href="/Photo/BMW-M-Logo.png?v=2">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
@@ -119,6 +118,48 @@
             font-weight: 700;
             letter-spacing: 2px;
             color: var(--good);
+        }
+
+        .cluster-hero .status-text {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: color 0.3s;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 10px currentColor;
+            flex-shrink: 0;
+        }
+
+        .status-text.st-ok { color: var(--good); }
+        .status-text.st-warn { color: var(--warn); }
+        .status-text.st-err { color: var(--m-red); }
+        .status-text.st-idle { color: var(--muted); }
+
+        .status-text.st-ok .status-dot { animation: dotPulse 2s infinite; }
+        .status-text.st-err .status-dot { animation: dotPulse 0.8s infinite; }
+
+        @keyframes dotPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.35; }
+        }
+
+        .status-sub {
+            margin-top: 4px;
+            margin-left: 20px;
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: var(--muted);
+        }
+
+        .grid.stale {
+            opacity: 0.45;
+            transition: opacity 0.3s;
         }
 
         .cluster-hero .big-clock {
@@ -443,7 +484,11 @@
     <main>
         <div class="cluster-hero">
             <div>
-                <div class="status-text" id="sysStatus">CLOUD CONNECTED</div>
+                <div class="status-text st-idle" id="sysStatus">
+                    <span class="status-dot"></span>
+                    <span id="sysStatusText">CONNECTING...</span>
+                </div>
+                <div class="status-sub" id="sysStatusSub">WAITING FOR DATA</div>
             </div>
             <div>
                 <div class="big-clock" id="clusterClock">--:--:--</div>
@@ -532,8 +577,70 @@
             document.getElementById(id).style.strokeDashoffset = CIRC - (pct * CIRC);
         }
 
+        // =====================================================
+        // CONNECTION STATUS (แสดงสถานะแบบ HTTP status code)
+        // =====================================================
+        // ESP32 ส่งข้อมูลมาทุกกี่วินาที? ถ้าส่งห่างกว่านี้ให้ปรับเลขสองตัวนี้
+        const STALE_SEC = 30;    // เกินนี้ = ช้าผิดปกติ (408)
+        const OFFLINE_SEC = 120; // เกินนี้ = ถือว่าออฟไลน์ (503)
+
+        function fmtAge(sec) {
+            if (sec < 60) return sec + 's';
+            if (sec < 3600) return Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
+            return Math.floor(sec / 3600) + 'h ' + Math.floor((sec % 3600) / 60) + 'm';
+        }
+
+        function setConnStatus(d, httpErr) {
+            const box = document.getElementById('sysStatus');
+            const txt = document.getElementById('sysStatusText');
+            const sub = document.getElementById('sysStatusSub');
+            const grid = document.querySelector('.grid');
+
+            let cls, code, sub1, stale = true;
+
+            if (httpErr) {
+                cls = 'st-err';
+                code = (httpErr === true ? '502 CLOUD UNREACHABLE' : httpErr + ' CLOUD ERROR');
+                sub1 = 'CANNOT REACH SERVER / DATABASE';
+            } else if (d.deviceAgeSec === null || d.deviceAgeSec === undefined) {
+                cls = 'st-idle';
+                code = '404 DEVICE NOT FOUND';
+                sub1 = 'ESP32 HAS NEVER CHECKED IN';
+            } else if (d.deviceAgeSec > OFFLINE_SEC) {
+                cls = 'st-err';
+                code = '503 DEVICE OFFLINE';
+                sub1 = 'NO SIGNAL FROM ESP32 FOR ' + fmtAge(d.deviceAgeSec);
+            } else if (d.deviceAgeSec > STALE_SEC) {
+                cls = 'st-warn';
+                code = '408 REQUEST TIMEOUT';
+                sub1 = 'ESP32 DELAYED - LAST SEEN ' + fmtAge(d.deviceAgeSec) + ' AGO';
+            } else if (d.sensorOk === false) {
+                cls = 'st-err';
+                code = '422 SENSOR ERROR';
+                sub1 = 'ESP32 ONLINE BUT DHT SENSOR READ FAILED';
+            } else {
+                cls = 'st-ok';
+                code = '200 ONLINE';
+                sub1 = 'ESP32 + SENSOR OK - UPDATED ' + fmtAge(d.deviceAgeSec) + ' AGO';
+                stale = false;
+            }
+
+            box.className = 'status-text ' + cls;
+            txt.innerText = code;
+            sub.innerText = sub1;
+            if (grid) grid.classList.toggle('stale', stale);
+        }
+
         function fetchData() {
-            fetch('/api/status').then(r => r.json()).then(d => {
+            fetch('/api/status').then(r => {
+                if (!r.ok) {
+                    const err = new Error('HTTP ' + r.status);
+                    err.httpStatus = r.status;
+                    throw err;
+                }
+                return r.json();
+            }).then(d => {
+                setConnStatus(d);
                 document.getElementById('tempVal').innerText = Number(d.temp || 0).toFixed(1);
                 document.getElementById('humVal').innerText = Number(d.hum || 0).toFixed(1);
 
@@ -558,7 +665,10 @@
                     valveText.innerText = "CLOSED";
                     valveText.style.color = "var(--good)";
                 }
-            }).catch(e => console.log(e));
+            }).catch(e => {
+                console.log(e);
+                setConnStatus(null, e.httpStatus || true);
+            });
         }
 
         function setMode(mode) {

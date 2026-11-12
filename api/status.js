@@ -91,23 +91,49 @@ export default async function handler(req, res) {
 
             if (body.action === 'esp32_update') {
 
-                const temp = Number(body.temp ?? 0);
-                const hum = Number(body.hum ?? 0);
                 const relay = Boolean(body.relay ?? false);
+
+                // ตรวจค่าเซนเซอร์: ถ้า temp/hum เป็น null, NaN หรือไม่ถูกส่งมา
+                // หรือ ESP32 แจ้ง sensor_ok = false ถือว่า "เซนเซอร์ผิดปกติ"
+                const rawTemp = body.temp;
+                const rawHum = body.hum;
+                const readingValid =
+                    rawTemp !== null && rawTemp !== undefined &&
+                    rawHum !== null && rawHum !== undefined &&
+                    Number.isFinite(Number(rawTemp)) &&
+                    Number.isFinite(Number(rawHum));
+
+                const sensorOk = body.sensor_ok !== false && readingValid;
+
+                const temp = readingValid ? Number(rawTemp) : null;
+                const hum = readingValid ? Number(rawHum) : null;
 
 
                 // ---------------------------------------------
                 // 1. Update current system state
                 // ---------------------------------------------
 
+                // last_seen = "เวลาที่ ESP32 ติดต่อเข้ามาล่าสุด" (heartbeat)
+                // อัปเดตเฉพาะตอน ESP32 ยิงเข้ามาเท่านั้น (ไม่ปนกับตอนกดปุ่มบนเว็บ)
+                const nowIso = new Date().toISOString();
+
+                const stateUpdate = {
+                    relay: relay,
+                    sensor_ok: sensorOk,
+                    last_seen: nowIso,
+                    updated_at: nowIso
+                };
+
+                // ถ้าเซนเซอร์เสีย ไม่เขียนทับ temp/hum ด้วยค่าเพี้ยน
+                // (คงค่าล่าสุดที่อ่านได้ไว้)
+                if (sensorOk) {
+                    stateUpdate.temp = temp;
+                    stateUpdate.hum = hum;
+                }
+
                 const { error: updateError } = await supabase
                     .from('system_state')
-                    .update({
-                        temp: temp,
-                        hum: hum,
-                        relay: relay,
-                        updated_at: new Date().toISOString()
-                    })
+                    .update(stateUpdate)
                     .eq('id', 1);
 
                 if (updateError) {
@@ -127,7 +153,7 @@ export default async function handler(req, res) {
                     .order('recorded_at', { ascending: false })
                     .limit(1);
 
-                let shouldLog = true;
+                let shouldLog = sensorOk; // เซนเซอร์เสีย = ไม่บันทึกลงกราฟ
 
                 if (lastLogRows && lastLogRows.length > 0) {
                     const lastTime = new Date(
@@ -137,6 +163,7 @@ export default async function handler(req, res) {
                         (Date.now() - lastTime) / 60000;
 
                     shouldLog =
+                        sensorOk &&
                         minutesSinceLastLog >= LOG_INTERVAL_MINUTES;
                 }
 
@@ -475,7 +502,22 @@ export default async function handler(req, res) {
                 mode: state.mode,
 
                 triggerWatering:
-                    state.trigger_watering
+                    state.trigger_watering,
+
+                // อายุของ heartbeat ล่าสุดจาก ESP32 (วินาที)
+                // null = ยังไม่เคยมี ESP32 ติดต่อเข้ามาเลย
+                deviceAgeSec:
+                    state.last_seen
+                        ? Math.max(
+                            0,
+                            Math.round(
+                                (Date.now() -
+                                    new Date(state.last_seen).getTime()) / 1000
+                            )
+                        )
+                        : null,
+
+                sensorOk: state.sensor_ok !== false
 
             });
         }
