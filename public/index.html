@@ -700,7 +700,7 @@
         // =====================================================
 
         const RETENTION_DAYS = 5;
-        const SLOT_MINUTES = 30;
+        const SLOT_MINUTES = 15;
         const SLOTS_PER_DAY = (24 * 60) / SLOT_MINUTES; // 48
 
         let trendChart = null;
@@ -778,8 +778,8 @@
                             pointBackgroundColor: '#00A1E4',
                             yAxisID: 'yTemp',
                             tension: 0.3,
-                            pointRadius: 3,
-                            pointHoverRadius: 5,
+                            pointRadius: 2,
+                            pointHoverRadius: 4,
                             borderWidth: 2,
                             spanGaps: false,
                             fill: true
@@ -792,8 +792,8 @@
                             pointBackgroundColor: '#0166B1',
                             yAxisID: 'yHum',
                             tension: 0.3,
-                            pointRadius: 3,
-                            pointHoverRadius: 5,
+                            pointRadius: 2,
+                            pointHoverRadius: 4,
                             borderWidth: 2,
                             spanGaps: false,
                             fill: true

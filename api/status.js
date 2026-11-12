@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 // เก็บข้อมูลลง temperature_logs ทุกกี่นาที (ปรับได้ตามต้องการ)
-const LOG_INTERVAL_MINUTES = 30;
+const LOG_INTERVAL_MINUTES = 15;
 
 // เก็บข้อมูลย้อนหลังไว้กี่วัน (เก่ากว่านี้จะถูกลบทิ้งอัตโนมัติ)
 const RETENTION_DAYS = 5;
@@ -155,16 +155,18 @@ export default async function handler(req, res) {
 
                 let shouldLog = sensorOk; // เซนเซอร์เสีย = ไม่บันทึกลงกราฟ
 
+                // บันทึก "หนึ่งจุดต่อหนึ่งช่องเวลา" ตามนาฬิกา
+                // (00:00, 00:15, 00:30, ...) เวลาจะไม่เลื่อนไหล
+                // ข้อมูลเป็นตารางสม่ำเสมอ เหมาะกับการวิเคราะห์
+                // (ใช้ได้กับค่าที่หาร 60 ลงตัว เช่น 5, 10, 15, 30)
                 if (lastLogRows && lastLogRows.length > 0) {
-                    const lastTime = new Date(
-                        lastLogRows[0].recorded_at
-                    ).getTime();
-                    const minutesSinceLastLog =
-                        (Date.now() - lastTime) / 60000;
+                    const slotMs = LOG_INTERVAL_MINUTES * 60000;
+                    const currentSlot = Math.floor(Date.now() / slotMs);
+                    const lastSlot = Math.floor(
+                        new Date(lastLogRows[0].recorded_at).getTime() / slotMs
+                    );
 
-                    shouldLog =
-                        sensorOk &&
-                        minutesSinceLastLog >= LOG_INTERVAL_MINUTES;
+                    shouldLog = sensorOk && currentSlot > lastSlot;
                 }
 
                 if (shouldLog) {
